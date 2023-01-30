@@ -7,7 +7,7 @@ import re
 import numpy as np
 import torch
 from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, Subset
 from torchvision import datasets
 from torchvision import transforms
 import torch.onnx
@@ -42,11 +42,22 @@ def train(args):
     transform = transforms.Compose([
         transforms.Resize(args.image_size),
         transforms.CenterCrop(args.image_size),
+        # Added RandomRotation
+        transforms.RandomRotation(args.random_rotation),
         transforms.ToTensor(),
-        transforms.Lambda(lambda x: x.mul(255))
+        transforms.Lambda(lambda x: x.mul(255)),
     ])
     train_dataset = datasets.ImageFolder(args.dataset, transform)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
+
+    # Enable subset training
+    if args.subset:
+        sampler = RandomSampler(train_dataset,num_samples=args.subset)
+    else: 
+        sampler = None
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size,sampler=sampler)
+
+    print('train_dataset size = {}'.format(len(train_dataset)))
+    print('train_loader size = {}'.format(len(train_loader)))
 
     transformer = TransformerNet().to(device)
     optimizer = Adam(transformer.parameters(), args.lr)
@@ -65,11 +76,13 @@ def train(args):
     gram_style = [utils.gram_matrix(y) for y in features_style]
 
     for e in range(args.epochs):
+        # print('Epoch {}'.format(e))
         transformer.train()
         agg_content_loss = 0.
         agg_style_loss = 0.
         count = 0
         for batch_id, (x, _) in enumerate(train_loader):
+            # print('  Batch {}'.format(batch_id))
             n_batch = len(x)
             count += n_batch
             optimizer.zero_grad()
@@ -219,6 +232,17 @@ def main():
                                   help="number of images after which the training loss is logged, default is 500")
     train_arg_parser.add_argument("--checkpoint-interval", type=int, default=2000,
                                   help="number of batches after which a checkpoint of the trained model will be created")
+    # Added arguments
+    train_arg_parser.add_argument('--mps', action='store_true', default=False, help='enable macOS GPU training')
+    
+    train_arg_parser.add_argument("--subset", type=int,
+                                  help="size of randomly sampled subset to train on")
+
+    train_arg_parser.add_argument("--random_rotation", type=int, nargs="+", default=0,
+                                  help="+- window of random rotations")
+    train_arg_parser.add_argument("--log_interval", type=int,
+                                  help="log_interval")
+                                  
 
     eval_arg_parser = subparsers.add_parser("eval", help="parser for evaluation/stylizing arguments")
     eval_arg_parser.add_argument("--content-image", type=str, required=True,
